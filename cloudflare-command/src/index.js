@@ -18,7 +18,7 @@ export default {
       return Response.json({ service: 'nhih-command', worker: 'ready', upstream: 'not-checked' }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const edgeStatic = request.method === 'GET' && (PWA_ASSETS.has(incoming.pathname) || STATIC_ASSET.test(incoming.pathname));
+    const edgeStatic = request.method === 'GET' && !request.headers.has('authorization') && !request.headers.has('cookie') && (PWA_ASSETS.has(incoming.pathname) || STATIC_ASSET.test(incoming.pathname));
     const edgeCache = caches.default;
     const cacheKey = new Request(incoming.origin + incoming.pathname + incoming.search, { method: 'GET' });
     if (edgeStatic) {
@@ -71,7 +71,7 @@ export default {
       const cachedHeaders = new Headers(out);
       cachedHeaders.delete('set-cookie');
       const copy = new Response(result.clone().body, { status: result.status, headers: cachedHeaders });
-      await edgeCache.put(cacheKey, copy);
+      try { await edgeCache.put(cacheKey, copy); } catch (error) { console.warn('PWA edge cache unavailable', String(error)); }
     }
     return result;
   }
