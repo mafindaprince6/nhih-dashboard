@@ -1,0 +1,8 @@
+name = "nhih-command"
+main = "cloudflare-command/src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Cloudflare Builds executes Wrangler from the repository root.
+# Keep this configuration aligned with cloudflare-command/wrangler.toml.
+[previews]
