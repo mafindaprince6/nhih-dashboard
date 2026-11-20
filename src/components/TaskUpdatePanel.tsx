@@ -1,0 +1,293 @@
+import { useMemo, useRef, useState } from 'react'
+import { DeskDeleteButton } from './DeskDeleteButton'
+import { ParticipantPicker } from './ParticipantPicker'
+import { PlaceFields, PlaceLine, placeFromForm } from './PlaceFields'
+import { StatusPill } from './Header'
+import { TaskActions } from './TaskActions'
+import { useOps } from '../store/OpsContext'
+import type { Priority, Task, TaskStatus } from '../types'
+import { displayStatus, memberNames, taskStatusLabel } from '../utils/metrics'
+import { formatDue, toDatetimeLocal } from '../utils/time'
+
+function assigneesFromForm(data: FormData, fallback: string[] = []): string[] {
+  const selected = data.getAll('assignees').map(String).filter(Boolean)
+  return selected.length ? selected : fallback
+}
+
+const STATUSES: TaskStatus[] = [
+  'not_started',
+  'in_progress',
+  'under_review',
+  'completed',
+  'overdue',
+]
+
+const PRIORITIES: Priority[] = ['critical', 'high', 'medium', 'low']
+
+export function TaskUpdatePanel({ selectedTaskId }: { selectedTaskId?: string } = {}) {
+  const { state } = useOps()
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'open' | 'all'>('open')
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const now = useMemo(() => new Date(), [state.tasks])
+
+  const tasks = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return [...state.tasks]
+      .filter((task) => {
+        if (selectedTaskId && task.id !== selectedTaskId) return false
+        const status = displayStatus(task, now)
+        if (!selectedTaskId && filter === 'open' && status === 'completed') return false
+        if (!q) return true
+        const owner = memberNames(state.members, task.assignedTo).toLowerCase()
+        return (
+          task.title.toLowerCase().includes(q) ||
+          task.description.toLowerCase().includes(q) ||
+          owner.includes(q)
+        )
+      })
+      .sort((a, b) => {
+        const aDone = displayStatus(a, now) === 'completed' ? 1 : 0
+        const bDone = displayStatus(b, now) === 'completed' ? 1 : 0
+        if (aDone !== bDone) return aDone - bDone
+        return +new Date(a.dueDate) - +new Date(b.dueDate)
+      })
+  }, [state.tasks, state.members, query, filter, now, selectedTaskId])
+
+  const openCount = state.tasks.filter((task) => displayStatus(task, now) !== 'completed').length
+
+  return (
+    <section className="task-update">
+      <p className="admin-help">
+        Update progress, status, due date, owner, and the rest. Changes show on the dashboard.
+      </p>
+      {!selectedTaskId && <div className="task-update-tools">
+        <div className="admin-tabs compact">
+          <button type="button" className={filter === 'open' ? 'is-active' : ''} onClick={() => setFilter('open')}>
+            Open ({openCount})
+          </button>
+          <button type="button" className={filter === 'all' ? 'is-active' : ''} onClick={() => setFilter('all')}>
+            All ({state.tasks.length})
+          </button>
+        </div>
+        <label className="search">
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tasks" />
+        </label>
+      </div>
+      }
+      {tasks.length === 0 && <p className="muted">No tasks to update yet. Assign one first.</p>}
+      <div className="task-update-list">
+        {tasks.map((task) => (
+          <TaskUpdateCard
+            key={task.id}
+            task={task}
+            now={now}
+            editing={selectedTaskId ? !collapsed[task.id] : !collapsed[task.id]}
+            onToggle={() =>
+              setCollapsed((current) => ({ ...current, [task.id]: !current[task.id] }))
+            }
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function TaskUpdateCard({
+  task,
+  now,
+  editing,
+  onToggle,
+}: {
+  task: Task
+  now: Date
+  editing: boolean
+  onToggle: () => void
+}) {
+  const { state, updateTask, removeTask } = useOps()
+  const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const formRef = useRef<HTMLFormElement>(null)
+  const status = displayStatus(task, now)
+
+  return (
+    <article className="task-update-card">
+      <header className="task-update-top">
+        <div>
+          <strong>{task.title}</strong>
+          <PlaceLine
+            workKind={task.workKind}
+            workKindOther={task.workKindOther}
+            district={task.district}
+            facility={task.facility}
+          />
+          <p className="muted">
+            {memberNames(state.members, task.assignedTo)} · {formatDue(task.dueDate, now)}
+          </p>
+        </div>
+        <div className="admin-item-head">
+          <StatusPill status={status} />
+          <DeskDeleteButton label={task.title} onDelete={() => removeTask(task.id)} />
+        </div>
+      </header>
+
+      <div className="task-update-progress">
+        <TaskActions task={task} />
+        <select
+          value={task.status}
+          aria-label={`Status for ${task.title}`}
+          onChange={async (e) => {
+            const status = e.target.value as TaskStatus
+            setSaveError('')
+            try { await updateTask(
+              task.id,
+              status === 'completed' ? { status, progress: 100 } : { status },
+            ) } catch (error) {
+              setSaveError(`Status not saved: ${error instanceof Error ? error.message : 'server unavailable'}`)
+            }
+          }}
+        >
+          {STATUSES.map((item) => (
+            <option key={item} value={item}>
+              {taskStatusLabel(item)}
+            </option>
+          ))}
+        </select>
+        <button type="button" className={`tool-btn ${editing ? 'is-on' : ''}`} onClick={onToggle}>
+          {editing ? 'Close' : 'Edit details'}
+        </button>
+      </div>
+
+      {editing && (
+        <form
+          id={`edit-task-${task.id}`}
+          ref={formRef}
+          className="admin-form"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            const data = new FormData(e.currentTarget)
+            const due = new Date(String(data.get('dueDate')))
+            if (Number.isNaN(due.getTime())) return
+            const progressRaw = Number(data.get('progress') || task.progress)
+            const nextStatus = String(data.get('status')) as TaskStatus
+            const progress =
+              nextStatus === 'completed'
+                ? 100
+                : Math.min(100, Math.max(0, Math.round(progressRaw)))
+            const assignedTo = assigneesFromForm(data, task.assignedTo)
+            if (!assignedTo.length) return
+            setSaved(false)
+            setSaveError('')
+            try { await updateTask(task.id, {
+              title: String(data.get('title')).trim(),
+              description: String(data.get('description') || '').trim(),
+              assignedTo,
+              assignedBy: String(data.get('assignedBy')),
+              priority: String(data.get('priority')) as Priority,
+              dueDate: due.toISOString(),
+              status: nextStatus,
+              progress,
+              ...placeFromForm(data),
+            })
+              setSaved(true)
+              window.setTimeout(() => setSaved(false), 2000)
+            } catch (error) {
+              setSaveError(`Update was not saved: ${error instanceof Error ? error.message : 'server unavailable'}. Please try again.`)
+            }
+          }}
+        >
+          <label>
+            Title
+            <input name="title" required defaultValue={task.title} />
+          </label>
+          <label>
+            Update / notes
+            <textarea
+              name="description"
+              rows={3}
+              defaultValue={task.description}
+              placeholder="What changed, blocker, next step…"
+            />
+          </label>
+          <ParticipantPicker
+            members={state.members}
+            name="assignees"
+            legend="Assigned to"
+            selectedIds={task.assignedTo}
+          />
+          <label>
+            Assigned by
+            <select name="assignedBy" defaultValue={task.assignedBy}>
+              {state.members.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name} ({member.role})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="admin-split">
+            <label>
+              Priority
+              <select name="priority" defaultValue={task.priority}>
+                {PRIORITIES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Status
+              <select
+                name="status"
+                defaultValue={task.status}
+                onChange={(e) => {
+                  const form = e.currentTarget.form
+                  const progress = form?.elements.namedItem('progress')
+                  if (e.currentTarget.value === 'completed' && progress instanceof HTMLInputElement) {
+                    progress.value = '100'
+                  }
+                }}
+              >
+                {STATUSES.map((item) => (
+                  <option key={item} value={item}>
+                    {taskStatusLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="admin-split">
+            <label>
+              Due
+              <input name="dueDate" type="datetime-local" required defaultValue={toDatetimeLocal(new Date(task.dueDate))} />
+            </label>
+            <label>
+              Progress %
+              <input
+                key={`${task.id}-${task.progress}-${task.status}`}
+                name="progress"
+                type="number"
+                min={0}
+                max={100}
+                defaultValue={task.status === 'completed' ? 100 : task.progress}
+              />
+            </label>
+          </div>
+          <PlaceFields
+            workKind={task.workKind}
+            workKindOther={task.workKindOther}
+            district={task.district}
+            facility={task.facility ?? ''}
+          />
+          <button type="button" className="primary-btn" onClick={() => formRef.current?.requestSubmit()}>
+            Save updates
+          </button>
+          {saved && <p className="meet-saved">Updates saved to the dashboard.</p>}
+          {saveError && <p className="warn-text" role="alert">{saveError}</p>}
+        </form>
+      )}
+    </article>
+  )
+}

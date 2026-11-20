@@ -1,0 +1,40 @@
+{
+  "name": "nhih-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "db:setup": "tsx scripts/setup-postgres.ts",
+    "db:import": "tsx scripts/import-ops-to-postgres.ts",
+    "build": "node scripts/generate-desk-icons.mjs && tsc --noEmit && tsc --noEmit -p tsconfig.server.json && vite build && node scripts/bundle-api.mjs",
+    "preview": "vite preview",
+    "start": "tsx server/index.ts",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f app"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@vercel/blob": "^2.6.1",
+    "hono": "^4.13.5",
+    "pg": "^8.23.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsx": "^4.23.13",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.4",
+    "esbuild": "^0.25.12",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.4"
+  }
+}
