@@ -34,3 +34,4 @@ Then verify the page links the manifest, that Chrome shows **Install**, and that
 - Do not disable authorization, expose server SSH, or make a database publicly accessible.
 - Keep existing NHIH service and GitHub auto-deploy unchanged.
 - This is a Cloudflare Worker reverse proxy, not a static Cloudflare Pages copy. It retains same-origin /api calls without requiring changes to dashboard code.
+  
