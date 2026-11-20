@@ -2,12 +2,17 @@
 // Reverse-proxies the existing NHIH server so /desk and /api remain same-origin.
 // Does not store credentials, cache responses, or replicate operational records.
 const UPSTREAM = 'https://nhih-ops.tailecbac3.ts.net';
+const UPSTREAM_TIMEOUT_MS = 12000;
 
 export default {
   async fetch(request) {
     const incoming = new URL(request.url);
     if (incoming.pathname === '/') {
       return Response.redirect(new URL('/desk', incoming.origin), 302);
+    }
+
+    if (incoming.pathname === '/__command-health') {
+      return Response.json({ service: 'nhih-command', worker: 'ready', upstream: 'not-checked' }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const target = new URL(incoming.pathname + incoming.search, UPSTREAM);
@@ -25,10 +30,11 @@ export default {
     });
     let response;
     try {
-      response = await fetch(upstreamRequest, { redirect: 'manual' });
-    } catch {
-      return new Response('NHIH Command is temporarily unavailable. Check the NHIH server connection.', {
-        status: 502,
+      response = await fetch(upstreamRequest, { redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+    } catch (error) {
+      console.error('NHIH upstream fetch failed', { path: incoming.pathname, error: String(error) });
+      return new Response('NHIH Command could not reach the NHIH server. Please try again later.', {
+        status: 504,
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }
